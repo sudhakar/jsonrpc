@@ -83,7 +83,6 @@ type function struct {
 	receiver reflect.Value
 	method   reflect.Method
 	args     reflect.Type
-	reply    reflect.Type
 }
 
 // Registry is a collection of services have methods that can be called remotely.
@@ -110,14 +109,14 @@ func getRPCMethodsOfType(object interface{}) ([]*function, error) {
 			// skip unexported method
 			continue
 		}
-		if method.Type.NumIn() < 3 {
-			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s is missing request/reply arguments", object, method.Name)
+		if method.Type.NumIn() < 1 {
+			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s is missing request argument", object, method.Name)
 		}
-		if method.Type.In(2).Kind() != reflect.Ptr {
-			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s reply argument must be a pointer type", object, method.Name)
+		if method.Type.NumOut() < 2 {
+			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s should return both reply & error", object, method.Name)
 		}
 		var tmp error
-		if method.Type.NumOut() != 1 || method.Type.Out(0) != reflect.TypeOf(&tmp).Elem() {
+		if method.Type.Out(1) != reflect.TypeOf(&tmp).Elem() {
 			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s must return error", object, method.Name)
 		}
 
@@ -125,7 +124,6 @@ func getRPCMethodsOfType(object interface{}) ([]*function, error) {
 			receiver: reflect.ValueOf(object),
 			method:   method,
 			args:     method.Type.In(1),
-			reply:    method.Type.In(2).Elem(),
 		}
 		fns = append(fns, fn)
 	}
@@ -151,7 +149,7 @@ func getRPCMethodsOfType(object interface{}) ([]*function, error) {
 // types are known to ws_rpc and the codec in use.
 //
 // The methods should have return type error.
-func (r *Registry) RegisterService(object interface{}) {
+func (r *Registry) RegisterService(object interface{}) *Registry {
 	methods, err := getRPCMethodsOfType(object)
 	if err != nil {
 		// programmer error
@@ -167,6 +165,8 @@ func (r *Registry) RegisterService(object interface{}) {
 		name := serviceName + "." + fn.method.Name
 		r.functions[name] = fn
 	}
+
+	return r
 }
 
 // NewRegistry creates a new Registry.
@@ -372,26 +372,24 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 		args = args.Elem()
 	}
 
-	reply := reflect.New(fn.reply)
-
 	numArgs := fn.method.Type.NumIn()
 	argslist := make([]reflect.Value, numArgs, numArgs)
 
 	argslist[0] = fn.receiver
 	argslist[1] = args
-	argslist[2] = reply
 
-	if numArgs > 3 {
-		for i := 3; i < numArgs; i++ {
+	if numArgs > 2 {
+		for i := 2; i < numArgs; i++ {
 			argslist[i] = reflect.Zero(fn.method.Type.In(i))
 		}
 		// first fill what we can
-		e.fillArgs(argslist[3:])
+		e.fillArgs(argslist[2:])
 
 	}
 
 	retVal := fn.method.Func.Call(argslist)
-	errIn := retVal[0].Interface()
+	reply := retVal[0].Interface()
+	errIn := retVal[1].Interface()
 	if errIn != nil {
 		err := errIn.(error)
 		msg.Error = &Error{Code: http.StatusBadRequest, Msg: err.Error()}
@@ -410,7 +408,7 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 	msg.Error = nil
 	msg.Func = ""
 	msg.Args = nil
-	msg.Result = reply.Interface()
+	msg.Result = reply
 
 	err := e.send(msg)
 	if err != nil {
