@@ -17,6 +17,13 @@
       "request": "launch",
       "mode": "debug",
       "program": "${workspaceFolder}/examples/go/client/client.go"
+    },
+    {
+      "name": "js-jsonrpc client",
+      "program": "${workspaceFolder}/examples/js/client.mjs",
+      "request": "launch",
+      "skipFiles": ["<node_internals>/**"],
+      "type": "pwa-node"
     }
   ]
 }

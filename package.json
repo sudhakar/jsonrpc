@@ -2,8 +2,11 @@
   "name": "jsonrpc",
   "version": "1.0.0",
   "description": "jsonrpc over websocket for golang &amp; typescript",
-  "main": "index.js",
+  "type": "module",
+  "main": "js/index.js",
+  "types": "js/index.d.ts",
   "scripts": {
+    "build": "tsc -p .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

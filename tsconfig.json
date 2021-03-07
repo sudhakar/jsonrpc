@@ -1,5 +1,5 @@
 {
-  "files": ["index.ts"],
+  "files": ["js/index.ts"],
   "compilerOptions": {
     "declaration": true,
     "target": "ES2020",

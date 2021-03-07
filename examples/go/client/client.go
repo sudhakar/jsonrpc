@@ -42,19 +42,20 @@ func main() {
 	peer := Peer{}
 	registry := jsonrpc.NewRegistry().RegisterService(&peer)
 	endpoint := jsonrpc.NewEndpoint(conn, registry)
+
 	go endpoint.Serve()
 
 	defer endpoint.Close()
 
-	var reply interface{}
 	start := time.Now()
+	reply := data.Outputting{}
+	args := data.Incoming{From: "Tom", Message: "hello!"}
+	err = endpoint.Call("Chat.Message", &args, &reply)
 
-	for i := 0; i < 1; i++ {
-		if err = endpoint.Call("Chat.Message", &data.Incoming{From: "Tom", Message: "hello!"}, &reply); err != nil {
-			log.Fatal("Call:", err)
-		} else {
-			log.Print("recv msg: ", reply)
-		}
+	if err != nil {
+		log.Fatal("Call:", err)
+	} else {
+		log.Print("recv resp: ", reply)
 	}
 
 	log.Print("Elapsed: ", time.Since(start))
@@ -64,5 +65,4 @@ func main() {
 	signal.Notify(ctrlC, syscall.SIGTERM, syscall.SIGINT)
 
 	<-ctrlC
-
 }

@@ -13,15 +13,18 @@ declare class WSRPC implements JsonRPC {
     private openCB;
     private errCB;
     private id;
+    private sendBuffer;
     private methods;
     private pending;
     constructor(url: string, openCB?: () => void, errCB?: {
         (...data: any[]): void;
         (message?: any, ...optionalParams: any[]): void;
     });
-    private send;
     private on;
+    private send;
+    private onopen;
     private onclose;
+    private onerror;
     private connect;
     register(method: string, handler: handlerFn): void;
     call(method: string, params?: any): Promise<any>;

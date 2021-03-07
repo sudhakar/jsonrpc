@@ -15,7 +15,21 @@ interface JsonRPC {
 const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
 const WebSocket = isBrowser ? window.WebSocket : (await import('ws')).default
 
+const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000
+const NOISY_ERRS = new Set(['ECONNREFUSED'])
+
+const SERVER_ERROR = {
+  code: -32000,
+  msg: 'ServerError',
+  data: 'Error from called method. ',
+}
+
+const NO_METHOD_ERRPR = {
+  code: -32601,
+  msg: 'NoMethodError',
+  data: 'No such function. ',
+}
 
 class WSRPC implements JsonRPC {
   private ws?: WebSocket
@@ -24,6 +38,7 @@ class WSRPC implements JsonRPC {
   private errCB: (e: Error) => void
 
   private id = 0
+  private sendBuffer: string[] = []
   private methods: Map<string, handlerFn> = new Map()
   private pending: Map<number, promisePair> = new Map()
 
@@ -35,10 +50,6 @@ class WSRPC implements JsonRPC {
     this.connect()
   }
 
-  private send(msg: string) {
-    this.ws!.send(msg)
-  }
-
   private on(data: string) {
     const msg = JSON.parse(data)
 
@@ -46,17 +57,27 @@ class WSRPC implements JsonRPC {
     if ('method' in msg) {
       const fn = this.methods.get(msg.method)
       if (!fn) {
-        console.error(`WSRPC: Cant inovke unknown method "${msg.method}"`)
+        const err = { ...NO_METHOD_ERRPR }
+        err.data += `method=${msg.method}`
+        if ('id' in msg) {
+          this.send(JSON.stringify({ id: msg.id, error: err }))
+        } else {
+          console.error(`WSRPC: Cant 'notify' unknown method "${msg.method}"`)
+        }
         return
       }
 
       // request
       if ('id' in msg) {
-        const resp = { jsonrpc: '2.0', id: msg.id }
+        const resp = { /*jsonrpc: '2.0',*/ id: msg.id }
 
         fn(msg.params)
           .then(result => this.send(JSON.stringify({ ...resp, result })))
-          .catch(error => this.send(JSON.stringify({ ...resp, error })))
+          .catch(error => {
+            const msg = { ...resp, error: { ...SERVER_ERROR } }
+            msg.error.data += `name=${error.name}, message=${error.message}`
+            this.send(JSON.stringify(msg))
+          })
         return
       }
 
@@ -74,9 +95,37 @@ class WSRPC implements JsonRPC {
 
       const { resolve, reject } = this.pending.get(msg.id)!
       if ('result' in msg) resolve(msg.result)
-      else reject(msg.error)
+      else if ('error' in msg) reject(msg.error)
+      else {
+        console.warn(
+          `Received msgID=${msg.id} with neither 'result' or 'error'. ` +
+            `Likely service method is for 'notify' but is called as 'request'`,
+        )
+        resolve()
+      }
       return
     }
+  }
+
+  private send(msg: string) {
+    if (this.ws!.readyState !== WebSocket.OPEN) {
+      this.sendBuffer.push(msg)
+      console.log(this.sendBuffer.length)
+      if (this.sendBuffer.length >= MAX_BUF_SIZE) {
+        throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`)
+      }
+      return
+    }
+    this.ws!.send(msg)
+  }
+
+  private onopen() {
+    const bufSize = this.sendBuffer.length
+    for (let i = 0; i < bufSize; i++) {
+      this.send(this.sendBuffer.shift()!)
+    }
+
+    this.openCB()
   }
 
   private onclose(evt: any) {
@@ -90,11 +139,16 @@ class WSRPC implements JsonRPC {
     setTimeout(() => this.connect(), RECONNECT_MS)
   }
 
+  private onerror(err: any) {
+    if (err && NOISY_ERRS.has(err.code)) return
+    this.errCB(err)
+  }
+
   private connect() {
     const ws = (this.ws = new WebSocket(this.url) as WebSocket)
     ws.onmessage = (ev: any) => this.on(ev.data)
-    ws.onerror = (ev: any) => this.errCB(ev.error)
-    ws.onopen = () => this.openCB()
+    ws.onerror = (ev: any) => this.onerror(ev.error)
+    ws.onopen = () => this.onopen()
     ws.onclose = this.onclose.bind(this)
   }
 
@@ -104,7 +158,7 @@ class WSRPC implements JsonRPC {
 
   public call(method: string, params?: any): Promise<any> {
     const id = this.id++
-    const msg = JSON.stringify({ jsonrpc: '2.0', id, method, params })
+    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params })
 
     try {
       this.send(msg)
@@ -118,29 +172,9 @@ class WSRPC implements JsonRPC {
   }
 
   public notify(method: string, params?: any) {
-    const msg = JSON.stringify({ jsonrpc: '2.0', method, params })
+    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params })
     this.send(msg)
   }
 }
-
-async function server() {
-  const serverRPC = new WSRPC('')
-
-  serverRPC.notify('onAccessToken', 'some token')
-
-  serverRPC.register('getAccessToken', async () => {
-    return 'some token'
-  })
-
-  serverRPC.register('getInstrument', async () => {
-    return {}
-  })
-}
-
-// const clientRPC = new WSRPC('')
-
-// clientRPC.register('onAccessToken', async (token: string) => {})
-
-// await clientRPC.call('getInstrument')
 
 export { JsonRPC, WSRPC }

@@ -16,16 +16,23 @@ package jsonrpc
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"net/rpc"
 	"reflect"
 	"sync"
 
 	"github.com/gorilla/websocket"
 )
+
+type rpcCall struct {
+	ServiceMethod string        // The name of the service and method to call.
+	Args          interface{}   // The argument to the function (*struct).
+	Reply         interface{}   // The reply from the function (*struct).
+	Error         error         // After completion, the error status.
+	Done          chan *rpcCall // Receives *Call when Go is complete.
+
+}
 
 // Message is the on-wire description of a method call or result.
 //
@@ -38,15 +45,15 @@ import (
 //
 //   {"id":"1","error":{"msg":"Math is hard, let's go shopping"}}
 type Message struct {
-	// 0 or omitted for untagged request (untagged response is illegal).
-	ID uint64 `json:"id,string,omitempty"`
+	// 0 or omitted for untagged request
+	ID *uint64 `json:"id,uint64,omitempty"`
 
 	// Name of the function to call. If set, this is a request; if
 	// unset, this is a response.
-	Func string `json:"fn,omitempty"`
+	Func string `json:"method,omitempty"`
 
 	// Arguments for the RPC call. Only valid for a request.
-	Args interface{} `json:"args,omitempty"`
+	Args interface{} `json:"params,omitempty"`
 
 	// Result of the function call. A response will always have
 	// either Result or Error set. Only valid for a response.
@@ -58,9 +65,9 @@ type Message struct {
 }
 
 type anyMessage struct {
-	ID     uint64          `json:"id,string,omitempty"`
-	Func   string          `json:"fn,omitempty"`
-	Args   json.RawMessage `json:"args,omitempty"`
+	ID     *uint64         `json:"id,uint64,omitempty"`
+	Func   string          `json:"method,omitempty"`
+	Args   json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
 	Error  *Error          `json:"error"`
 }
@@ -72,12 +79,35 @@ type Error struct {
 
 	Code int64 `json:"code"`
 
-	Data json.RawMessage `json:data,omitempty`
+	Data json.RawMessage `json:"data,omitempty"`
 }
 
 func (e Error) Error() string {
-	return fmt.Sprintf("ws_rpc: code %v message: %s", e.Code, e.Msg)
+	return fmt.Sprintf("jsonrpc: code=%d, name=%s, data=%s", e.Code, e.Msg, e.Data)
 }
+
+var (
+	noMethodErr = Error{
+		Code: -32601,
+		Msg:  "NoMethodError",
+		Data: []byte("No such function. "),
+	}
+	invalidParamsErr = Error{
+		Code: -32602,
+		Msg:  "invalidParamsErr",
+		Data: []byte("Invalid method parameter(s). "),
+	}
+	parseError = Error{
+		Code: -32700,
+		Msg:  "ParseError",
+		Data: []byte("Invalid JSON was received. "),
+	}
+	serverError = Error{
+		Code: -32000,
+		Msg:  "ServerError",
+		Data: []byte("Error from called method. "),
+	}
+)
 
 type function struct {
 	receiver reflect.Value
@@ -112,12 +142,16 @@ func getRPCMethodsOfType(object interface{}) ([]*function, error) {
 		if method.Type.NumIn() < 1 {
 			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s is missing request argument", object, method.Name)
 		}
-		if method.Type.NumOut() < 2 {
-			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s should return both reply & error", object, method.Name)
-		}
-		var tmp error
-		if method.Type.Out(1) != reflect.TypeOf(&tmp).Elem() {
-			return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s must return error", object, method.Name)
+
+		// 0 return is for notify
+		if method.Type.NumOut() != 0 {
+			if method.Type.NumOut() != 2 {
+				return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s should return both reply & error for call or omit both for notify", object, method.Name)
+			}
+			var tmp error
+			if method.Type.Out(1) != reflect.TypeOf(&tmp).Elem() {
+				return nil, fmt.Errorf("ws_rpc.RegisterService: method %T.%s must return error", object, method.Name)
+			}
 		}
 
 		fn := &function{
@@ -179,13 +213,14 @@ func NewRegistry() *Registry {
 // Endpoint manages the state for one connection (via a Codec) and the
 // pending calls on it, both incoming and outgoing.
 type Endpoint struct {
+	mu   sync.Mutex
 	conn *websocket.Conn
 
 	client struct {
 		// protects seq and pending
 		mutex   sync.Mutex
 		seq     uint64
-		pending map[uint64]*rpc.Call
+		pending map[uint64]*rpcCall
 	}
 
 	server struct {
@@ -208,7 +243,7 @@ func NewEndpoint(conn *websocket.Conn, registry *Registry) *Endpoint {
 	e := &Endpoint{}
 	e.conn = conn
 	e.server.registry = registry
-	e.client.pending = make(map[uint64]*rpc.Call)
+	e.client.pending = make(map[uint64]*rpcCall)
 	return e
 }
 
@@ -219,7 +254,7 @@ func NewClient(urlStr string, header http.Header) (*Endpoint, error) {
 	}
 	e := &Endpoint{}
 	e.conn = conn
-	e.client.pending = make(map[uint64]*rpc.Call)
+	e.client.pending = make(map[uint64]*rpcCall)
 	go e.Serve()
 	return e, nil
 }
@@ -239,7 +274,9 @@ func (e *Endpoint) serveRequest(msg *Message) error {
 	fn := e.server.registry.functions[msg.Func]
 	e.server.registry.mu.RUnlock()
 	if fn == nil {
-		msg.Error = &Error{Code: http.StatusBadRequest, Msg: "No such function."}
+		rpcErr := noMethodErr
+		rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte("method="+msg.Func)...)
+		msg.Error = &rpcErr
 		msg.Func = ""
 		msg.Args = nil
 		msg.Result = nil
@@ -261,8 +298,8 @@ func (e *Endpoint) serveRequest(msg *Message) error {
 
 func (e *Endpoint) serveResponse(msg *Message) error {
 	e.client.mutex.Lock()
-	call, found := e.client.pending[msg.ID]
-	delete(e.client.pending, msg.ID)
+	call, found := e.client.pending[*msg.ID]
+	delete(e.client.pending, *msg.ID)
 	e.client.mutex.Unlock()
 
 	if !found {
@@ -273,15 +310,19 @@ func (e *Endpoint) serveResponse(msg *Message) error {
 		if call.Reply != nil {
 			raw := msg.Result.(json.RawMessage)
 			if raw == nil {
-				call.Error = errors.New("ws_rpc.jsonmsg response must set result")
-			}
-			err := json.Unmarshal(raw, call.Reply)
-			if err != nil {
-				call.Error = fmt.Errorf("Unmarshaling result: %v", err)
+				log.Printf("Received msgID=%d with neither 'result' or 'error'. "+
+					"Likely service method is for 'notify' but is called as 'request'\n", *msg.ID)
+			} else {
+				err := json.Unmarshal(raw, call.Reply)
+				if err != nil {
+					rpcErr := parseError
+					rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+					call.Error = &rpcErr
+				}
 			}
 		}
 	} else {
-		call.Error = rpc.ServerError(msg.Error.Msg)
+		call.Error = msg.Error
 	}
 
 	// notify the caller, but never block
@@ -312,10 +353,17 @@ func (e *Endpoint) Serve() error {
 		msg.Result = anyMsg.Result
 		msg.Error = anyMsg.Error
 
-		if msg.Func != "" {
+		switch {
+		case msg.Func != "":
 			err = e.serveRequest(&msg)
-		} else {
+		case msg.ID != nil:
 			err = e.serveResponse(&msg)
+		default:
+			// ignore responses from notifications
+		}
+
+		if msg.Func != "" {
+		} else {
 		}
 		if err != nil {
 			return err
@@ -328,6 +376,8 @@ func (e *Endpoint) Close() error {
 }
 
 func (e *Endpoint) send(msg *Message) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.conn.WriteJSON(msg)
 }
 
@@ -354,7 +404,9 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 		err := json.Unmarshal(raw, args.Interface())
 
 		if err != nil {
-			msg.Error = &Error{Code: http.StatusBadRequest, Msg: err.Error()}
+			rpcErr := invalidParamsErr
+			rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+			msg.Error = &rpcErr
 			msg.Func = ""
 			msg.Args = nil
 			msg.Result = nil
@@ -387,22 +439,28 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 
 	}
 
+	var reply interface{}
 	retVal := fn.method.Func.Call(argslist)
-	reply := retVal[0].Interface()
-	errIn := retVal[1].Interface()
-	if errIn != nil {
-		err := errIn.(error)
-		msg.Error = &Error{Code: http.StatusBadRequest, Msg: err.Error()}
-		msg.Func = ""
-		msg.Args = nil
-		msg.Result = nil
-		err = e.send(msg)
-		if err != nil {
-			// well, we can't report the problem to the client...
-			e.conn.Close()
+
+	if len(retVal) == 2 {
+		reply = retVal[0].Interface()
+		errIn := retVal[1].Interface()
+		if errIn != nil {
+			err := errIn.(error)
+			rpcErr := serverError
+			rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+			msg.Error = &rpcErr
+			msg.Func = ""
+			msg.Args = nil
+			msg.Result = nil
+			err = e.send(msg)
+			if err != nil {
+				// well, we can't report the problem to the client...
+				e.conn.Close()
+				return
+			}
 			return
 		}
-		return
 	}
 
 	msg.Error = nil
@@ -419,19 +477,12 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 }
 
 // Go invokes the function asynchronously. See net/rpc Client.Go.
-func (e *Endpoint) Go(function string, args interface{}, reply interface{}, done chan *rpc.Call) *rpc.Call {
-	call := &rpc.Call{}
+func (e *Endpoint) Go(function string, args interface{}, reply interface{}) *rpcCall {
+	call := &rpcCall{}
 	call.ServiceMethod = function
 	call.Args = args
 	call.Reply = reply
-	if done == nil {
-		done = make(chan *rpc.Call, 10)
-	} else {
-		if cap(done) == 0 {
-			log.Panic("ws_rpc: done channel is unbuffered")
-		}
-	}
-	call.Done = done
+	call.Done = make(chan *rpcCall, 1)
 
 	msg := &Message{
 		Func: function,
@@ -440,8 +491,9 @@ func (e *Endpoint) Go(function string, args interface{}, reply interface{}, done
 
 	e.client.mutex.Lock()
 	e.client.seq++
-	msg.ID = e.client.seq
-	e.client.pending[msg.ID] = call
+	id := e.client.seq
+	msg.ID = &id
+	e.client.pending[id] = call
 	e.client.mutex.Unlock()
 
 	// put sending in a goroutine so a malicious client that
@@ -453,6 +505,21 @@ func (e *Endpoint) Go(function string, args interface{}, reply interface{}, done
 // Call invokes the named function, waits for it to complete, and
 // returns its error status. See net/rpc Client.Call
 func (e *Endpoint) Call(function string, args interface{}, reply interface{}) error {
-	call := <-e.Go(function, args, reply, make(chan *rpc.Call, 1)).Done
+	call := <-e.Go(function, args, reply).Done
 	return call.Error
+}
+
+// Notify invokes the named function & returns immeidately. Errors if any
+// during invocation is logged to stdout
+func (e *Endpoint) Notify(function string, args interface{}) {
+	msg := &Message{
+		Func: function,
+		Args: args,
+	}
+
+	go func() {
+		if err := e.send(msg); err != nil {
+			log.Printf("Notify Error: %v", err)
+		}
+	}()
 }
