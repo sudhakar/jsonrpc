@@ -76,7 +76,7 @@ class WSRPC {
         }
     }
     send(msg) {
-        if (this.ws.readyState !== WebSocket.OPEN) {
+        if (this.ws?.readyState !== WebSocket.OPEN) {
             this.sendBuffer.push(msg);
             console.log(this.sendBuffer.length);
             if (this.sendBuffer.length >= MAX_BUF_SIZE) {
@@ -133,6 +133,9 @@ class WSRPC {
     notify(method, params) {
         const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params });
         this.send(msg);
+    }
+    close(code = 1000) {
+        this.ws?.close(code);
     }
 }
 export { WSRPC };

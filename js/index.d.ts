@@ -29,5 +29,6 @@ declare class WSRPC implements JsonRPC {
     register(method: string, handler: handlerFn): void;
     call(method: string, params?: any): Promise<any>;
     notify(method: string, params?: any): void;
+    close(code?: number): void;
 }
 export { JsonRPC, WSRPC };
