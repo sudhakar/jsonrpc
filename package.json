@@ -1,6 +1,6 @@
 {
   "name": "jsonrpc",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "jsonrpc over websocket for golang &amp; typescript",
   "type": "module",
   "main": "js/index.js",
