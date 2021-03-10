@@ -108,7 +108,7 @@ class WSRPC implements JsonRPC {
   }
 
   private send(msg: string) {
-    if (this.ws!.readyState !== WebSocket.OPEN) {
+    if (this.ws?.readyState !== WebSocket.OPEN) {
       this.sendBuffer.push(msg)
       console.log(this.sendBuffer.length)
       if (this.sendBuffer.length >= MAX_BUF_SIZE) {
@@ -116,7 +116,7 @@ class WSRPC implements JsonRPC {
       }
       return
     }
-    this.ws!.send(msg)
+    this.ws.send(msg)
   }
 
   private onopen() {
@@ -174,6 +174,10 @@ class WSRPC implements JsonRPC {
   public notify(method: string, params?: any) {
     const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params })
     this.send(msg)
+  }
+
+  public close(code = 1000) {
+    this.ws?.close(code)
   }
 }
 
