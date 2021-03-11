@@ -526,5 +526,7 @@ func (e *Endpoint) Notify(function string, args interface{}) {
 
 // NotifyRaw calls notify with precompiled args
 func (e *Endpoint) NotifyRaw(bytes []byte) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return e.conn.WriteMessage(websocket.TextMessage, bytes)
 }
