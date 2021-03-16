@@ -25,7 +25,7 @@ declare class WSRPC implements JsonRPC {
     private onopen;
     private onclose;
     private onerror;
-    private connect;
+    connect(): void;
     register(method: string, handler: handlerFn): void;
     call(method: string, params?: any): Promise<any>;
     notify(method: string, params?: any): void;

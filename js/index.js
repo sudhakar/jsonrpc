@@ -22,7 +22,6 @@ class WSRPC {
         this.url = url;
         this.openCB = openCB;
         this.errCB = errCB;
-        this.connect();
     }
     on(data) {
         const msg = JSON.parse(data);
@@ -84,7 +83,7 @@ class WSRPC {
             }
             return;
         }
-        this.ws.send(msg);
+        this.ws?.send(msg);
     }
     onopen() {
         const bufSize = this.sendBuffer.length;
@@ -99,7 +98,7 @@ class WSRPC {
             console.log('WebSocket: closed');
             return;
         }
-        console.log(`Abnormal closure: Reconnecting in ${RECONNECT_MS}ms`);
+        console.log(`Code=${evt.code}. Reconnecting in ${RECONNECT_MS}ms`);
         setTimeout(() => this.connect(), RECONNECT_MS);
     }
     onerror(err) {
