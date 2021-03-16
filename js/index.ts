@@ -46,8 +46,6 @@ class WSRPC implements JsonRPC {
     this.url = url
     this.openCB = openCB
     this.errCB = errCB
-
-    this.connect()
   }
 
   private on(data: string) {
@@ -116,7 +114,7 @@ class WSRPC implements JsonRPC {
       }
       return
     }
-    this.ws.send(msg)
+    this.ws?.send(msg)
   }
 
   private onopen() {
@@ -135,7 +133,7 @@ class WSRPC implements JsonRPC {
       return
     }
 
-    console.log(`Abnormal closure: Reconnecting in ${RECONNECT_MS}ms`)
+    console.log(`Code=${evt.code}. Reconnecting in ${RECONNECT_MS}ms`)
     setTimeout(() => this.connect(), RECONNECT_MS)
   }
 
@@ -144,7 +142,7 @@ class WSRPC implements JsonRPC {
     this.errCB(err)
   }
 
-  private connect() {
+  public connect() {
     const ws = (this.ws = new WebSocket(this.url) as WebSocket)
     ws.onmessage = (ev: any) => this.on(ev.data)
     ws.onerror = (ev: any) => this.onerror(ev.error)
