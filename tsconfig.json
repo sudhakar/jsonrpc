@@ -1,13 +1,14 @@
 {
   "files": ["js/index.ts"],
   "compilerOptions": {
-    "declaration": true,
+    "declaration": false,
     "target": "ES2020",
-    "module": "ESNext",
     "strict": true,
     "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
+    "module": "CommonJS",
+    "allowSyntheticDefaultImports": false,
     "skipLibCheck": false,
+    "esModuleInterop": false,
     "forceConsistentCasingInFileNames": true
   }
 }

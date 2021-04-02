@@ -1,5 +1,12 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.WSServerTransport = exports.WSClientTransport = exports.WSRPC = void 0;
 const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
-const WebSocket = isBrowser ? window.WebSocket : (await import('ws')).default;
+let WebSocket;
+if (!isBrowser) {
+    // @ts-ignore
+    WebSocket = require('ws');
+}
 const MAX_BUF_SIZE = 100;
 const RECONNECT_MS = 5000;
 const NOISY_ERRS = new Set(['ECONNREFUSED']);
@@ -14,14 +21,12 @@ const NO_METHOD_ERRPR = {
     data: 'No such function. ',
 };
 class WSRPC {
-    constructor(url, openCB = () => { }, errCB = console.error) {
+    constructor(transport) {
         this.id = 0;
-        this.sendBuffer = [];
         this.methods = new Map();
         this.pending = new Map();
-        this.url = url;
-        this.openCB = openCB;
-        this.errCB = errCB;
+        this.transport = transport;
+        transport.setOnMessage(this.on.bind(this));
     }
     on(data) {
         const msg = JSON.parse(data);
@@ -75,15 +80,37 @@ class WSRPC {
         }
     }
     send(msg) {
-        if (this.ws?.readyState !== WebSocket.OPEN) {
-            this.sendBuffer.push(msg);
-            console.log(this.sendBuffer.length);
-            if (this.sendBuffer.length >= MAX_BUF_SIZE) {
-                throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`);
-            }
-            return;
+        this.transport.send(msg);
+    }
+    register(method, handler) {
+        this.methods.set(method, handler);
+    }
+    call(method, params) {
+        const id = this.id++;
+        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params });
+        try {
+            this.send(msg);
         }
-        this.ws?.send(msg);
+        catch (err) {
+            return Promise.reject(err);
+        }
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, { resolve, reject });
+        });
+    }
+    notify(method, params) {
+        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params });
+        this.send(msg);
+    }
+}
+exports.WSRPC = WSRPC;
+class WSClientTransport {
+    constructor(url, openCB = () => { }, errCB = console.error) {
+        this.sendBuffer = [];
+        this.onmessage = (data) => { };
+        this.url = url;
+        this.openCB = openCB;
+        this.errCB = errCB;
     }
     onopen() {
         const bufSize = this.sendBuffer.length;
@@ -108,33 +135,41 @@ class WSRPC {
     }
     connect() {
         const ws = (this.ws = new WebSocket(this.url));
-        ws.onmessage = (ev) => this.on(ev.data);
+        ws.onmessage = (ev) => this.onmessage(ev.data);
         ws.onerror = (ev) => this.onerror(ev.error);
         ws.onopen = () => this.onopen();
         ws.onclose = this.onclose.bind(this);
     }
-    register(method, handler) {
-        this.methods.set(method, handler);
+    setOnMessage(fn) {
+        this.onmessage = fn;
     }
-    call(method, params) {
-        const id = this.id++;
-        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params });
-        try {
-            this.send(msg);
+    send(msg) {
+        if (this.ws?.readyState !== WebSocket.OPEN) {
+            this.sendBuffer.push(msg);
+            console.log(this.sendBuffer.length);
+            if (this.sendBuffer.length >= MAX_BUF_SIZE) {
+                throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`);
+            }
+            return;
         }
-        catch (err) {
-            return Promise.reject(err);
-        }
-        return new Promise((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
-        });
-    }
-    notify(method, params) {
-        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params });
-        this.send(msg);
+        this.ws?.send(msg);
     }
     close(code = 1000) {
         this.ws?.close(code);
     }
 }
-export { WSRPC };
+exports.WSClientTransport = WSClientTransport;
+class WSServerTransport {
+    constructor(ws) {
+        this.onmessage = (data) => { };
+        this.ws = ws;
+        this.ws.onmessage = evt => this.onmessage(evt.data);
+    }
+    setOnMessage(fn) {
+        this.onmessage = fn;
+    }
+    send(msg) {
+        this.ws.send(msg);
+    }
+}
+exports.WSServerTransport = WSServerTransport;

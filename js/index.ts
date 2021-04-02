@@ -12,8 +12,14 @@ interface JsonRPC {
   notify: (method: string, params?: any) => void
 }
 
-const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined'
-const WebSocket = isBrowser ? window.WebSocket : (await import('ws')).default
+const isBrowser =
+  typeof window !== 'undefined' && typeof window.document !== 'undefined'
+
+let WebSocket: any
+if (!isBrowser) {
+  // @ts-ignore
+  WebSocket = require('ws')
+}
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000
@@ -32,20 +38,14 @@ const NO_METHOD_ERRPR = {
 }
 
 class WSRPC implements JsonRPC {
-  private ws?: WebSocket
-  private url: string
-  private openCB: () => void
-  private errCB: (e: Error) => void
-
   private id = 0
-  private sendBuffer: string[] = []
+  private transport: WSTransport
   private methods: Map<string, handlerFn> = new Map()
   private pending: Map<number, promisePair> = new Map()
 
-  constructor(url: string, openCB = () => {}, errCB = console.error) {
-    this.url = url
-    this.openCB = openCB
-    this.errCB = errCB
+  constructor(transport: WSTransport) {
+    this.transport = transport
+    transport.setOnMessage(this.on.bind(this))
   }
 
   private on(data: string) {
@@ -106,15 +106,52 @@ class WSRPC implements JsonRPC {
   }
 
   private send(msg: string) {
-    if (this.ws?.readyState !== WebSocket.OPEN) {
-      this.sendBuffer.push(msg)
-      console.log(this.sendBuffer.length)
-      if (this.sendBuffer.length >= MAX_BUF_SIZE) {
-        throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`)
-      }
-      return
+    this.transport.send(msg)
+  }
+
+  public register(method: string, handler: handlerFn) {
+    this.methods.set(method, handler)
+  }
+
+  public call(method: string, params?: any): Promise<any> {
+    const id = this.id++
+    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params })
+
+    try {
+      this.send(msg)
+    } catch (err) {
+      return Promise.reject(err)
     }
-    this.ws?.send(msg)
+
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject })
+    })
+  }
+
+  public notify(method: string, params?: any) {
+    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params })
+    this.send(msg)
+  }
+}
+
+interface WSTransport {
+  setOnMessage(fn: (data: any) => void): void
+  send(msg: string): void
+}
+
+class WSClientTransport implements WSTransport {
+  private ws?: WebSocket
+
+  private url: string
+  private openCB: () => void
+  private errCB: (e: Error) => void
+  private sendBuffer: string[] = []
+  private onmessage = (data: any) => {}
+
+  constructor(url: string, openCB = () => {}, errCB = console.error) {
+    this.url = url
+    this.openCB = openCB
+    this.errCB = errCB
   }
 
   private onopen() {
@@ -144,34 +181,26 @@ class WSRPC implements JsonRPC {
 
   public connect() {
     const ws = (this.ws = new WebSocket(this.url) as WebSocket)
-    ws.onmessage = (ev: any) => this.on(ev.data)
+    ws.onmessage = (ev: any) => this.onmessage(ev.data)
     ws.onerror = (ev: any) => this.onerror(ev.error)
     ws.onopen = () => this.onopen()
     ws.onclose = this.onclose.bind(this)
   }
 
-  public register(method: string, handler: handlerFn) {
-    this.methods.set(method, handler)
+  public setOnMessage(fn: (data: any) => void) {
+    this.onmessage = fn
   }
 
-  public call(method: string, params?: any): Promise<any> {
-    const id = this.id++
-    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params })
-
-    try {
-      this.send(msg)
-    } catch (err) {
-      return Promise.reject(err)
+  public send(msg: string) {
+    if (this.ws?.readyState !== WebSocket.OPEN) {
+      this.sendBuffer.push(msg)
+      console.log(this.sendBuffer.length)
+      if (this.sendBuffer.length >= MAX_BUF_SIZE) {
+        throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`)
+      }
+      return
     }
-
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-    })
-  }
-
-  public notify(method: string, params?: any) {
-    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params })
-    this.send(msg)
+    this.ws?.send(msg)
   }
 
   public close(code = 1000) {
@@ -179,4 +208,22 @@ class WSRPC implements JsonRPC {
   }
 }
 
-export { JsonRPC, WSRPC }
+class WSServerTransport implements WSTransport {
+  private ws: WebSocket
+  private onmessage = (data: any) => {}
+
+  constructor(ws: WebSocket) {
+    this.ws = ws
+    this.ws.onmessage = evt => this.onmessage(evt.data)
+  }
+
+  public setOnMessage(fn: (data: any) => void) {
+    this.onmessage = fn
+  }
+
+  public send(msg: string) {
+    this.ws.send(msg)
+  }
+}
+
+export { JsonRPC, WSRPC, WSTransport, WSClientTransport, WSServerTransport }

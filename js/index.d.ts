@@ -8,27 +8,45 @@ interface JsonRPC {
     notify: (method: string, params?: any) => void;
 }
 declare class WSRPC implements JsonRPC {
+    private id;
+    private transport;
+    private methods;
+    private pending;
+    constructor(transport: WSTransport);
+    private on;
+    private send;
+    register(method: string, handler: handlerFn): void;
+    call(method: string, params?: any): Promise<any>;
+    notify(method: string, params?: any): void;
+}
+interface WSTransport {
+    setOnMessage(fn: (data: any) => void): void;
+    send(msg: string): void;
+}
+declare class WSClientTransport implements WSTransport {
     private ws?;
     private url;
     private openCB;
     private errCB;
-    private id;
     private sendBuffer;
-    private methods;
-    private pending;
+    private onmessage;
     constructor(url: string, openCB?: () => void, errCB?: {
         (...data: any[]): void;
         (message?: any, ...optionalParams: any[]): void;
     });
-    private on;
-    private send;
     private onopen;
     private onclose;
     private onerror;
     connect(): void;
-    register(method: string, handler: handlerFn): void;
-    call(method: string, params?: any): Promise<any>;
-    notify(method: string, params?: any): void;
+    setOnMessage(fn: (data: any) => void): void;
+    send(msg: string): void;
     close(code?: number): void;
 }
-export { JsonRPC, WSRPC };
+declare class WSServerTransport implements WSTransport {
+    private ws;
+    private onmessage;
+    constructor(ws: WebSocket);
+    setOnMessage(fn: (data: any) => void): void;
+    send(msg: string): void;
+}
+export { JsonRPC, WSRPC, WSTransport, WSClientTransport, WSServerTransport };

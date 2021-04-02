@@ -51,9 +51,9 @@ func main() {
 
 		// time.Sleep(5 * time.Second)
 
-		reply := ""
+		reply := struct{}{}
 
-		err = endpoint.Call("Peer.SayHello", &data.Incoming{From: "Sudhh", Message: "hello!"}, &reply)
+		err = endpoint.Call("Peer.SayHello", &data.Incoming{From: "Sudhh", Message: "hello!"}, nil)
 
 		if err != nil {
 			log.Println(err)
