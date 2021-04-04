@@ -15,11 +15,7 @@ interface JsonRPC {
 const isBrowser =
   typeof window !== 'undefined' && typeof window.document !== 'undefined'
 
-let WebSocket: any
-if (!isBrowser) {
-  // @ts-ignore
-  WebSocket = require('ws')
-}
+let WebSocket = isBrowser ? window.WebSocket : require('ws')
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000
@@ -139,6 +135,9 @@ interface WSTransport {
   send(msg: string): void
 }
 
+/**
+ * WSClientTransport websocket client with reconnection & buffering
+ */
 class WSClientTransport implements WSTransport {
   private ws?: WebSocket
 
