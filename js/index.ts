@@ -12,10 +12,7 @@ interface JsonRPC {
   notify: (method: string, params?: any) => void
 }
 
-const isBrowser =
-  typeof window !== 'undefined' && typeof window.document !== 'undefined'
-
-let WebSocket = isBrowser ? window.WebSocket : require('ws')
+let WebSocket = self.WebSocket || require('ws')
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000

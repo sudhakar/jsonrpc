@@ -1,8 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.WSServerTransport = exports.WSClientTransport = exports.WSRPC = void 0;
-const isBrowser = typeof window !== 'undefined' && typeof window.document !== 'undefined';
-let WebSocket = isBrowser ? window.WebSocket : require('ws');
+let WebSocket = self.WebSocket || require('ws');
 const MAX_BUF_SIZE = 100;
 const RECONNECT_MS = 5000;
 const NOISY_ERRS = new Set(['ECONNREFUSED']);
