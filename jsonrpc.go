@@ -359,9 +359,6 @@ func (e *Endpoint) Serve() error {
 			// ignore responses from notifications
 		}
 
-		if msg.Func != "" {
-		} else {
-		}
 		if err != nil {
 			return err
 		}
@@ -473,8 +470,8 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 	}
 }
 
-// Go invokes the function asynchronously. See net/rpc Client.Go.
-func (e *Endpoint) Go(getMsg func(id uint64) []byte, reply interface{}) *rpcCall {
+// invoke the function asynchronously. See net/rpc Client.invoke.
+func (e *Endpoint) invoke(getMsg func(id uint64) []byte, reply interface{}) *rpcCall {
 	call := &rpcCall{}
 	call.Reply = reply
 	call.Done = make(chan *rpcCall, 1)
@@ -511,29 +508,25 @@ func (e *Endpoint) Call(function string, args interface{}, reply interface{}) er
 		return bytes
 	}
 
-	call := <-e.Go(fn, reply).Done
+	call := <-e.invoke(fn, reply).Done
 	return call.Error
 }
 
 // CallRaw calls `Call` with precompiled args
 func (e *Endpoint) CallRaw(fn func(id uint64) []byte, reply interface{}) error {
-	call := <-e.Go(fn, reply).Done
+	call := <-e.invoke(fn, reply).Done
 	return call.Error
 }
 
 // Notify invokes the named function & returns immeidately. Errors if any
 // during invocation is logged to stdout
-func (e *Endpoint) Notify(function string, args interface{}) {
+func (e *Endpoint) Notify(function string, args interface{}) error {
 	msg := &Message{
 		Func: function,
 		Args: args,
 	}
 
-	go func() {
-		if err := e.send(msg); err != nil {
-			log.Printf("Notify Error: %v", err)
-		}
-	}()
+	return e.send(msg)
 }
 
 // NotifyRaw calls notify with precompiled args
