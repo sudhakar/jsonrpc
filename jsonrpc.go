@@ -26,12 +26,9 @@ import (
 )
 
 type rpcCall struct {
-	ServiceMethod string        // The name of the service and method to call.
-	Args          interface{}   // The argument to the function (*struct).
-	Reply         interface{}   // The reply from the function (*struct).
-	Error         error         // After completion, the error status.
-	Done          chan *rpcCall // Receives *Call when Go is complete.
-
+	Reply interface{}   // The reply from the function (*struct).
+	Error error         // After completion, the error status.
+	Done  chan *rpcCall // Receives *Call when Go is complete.
 }
 
 // Message is the on-wire description of a method call or result.
@@ -477,35 +474,50 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 }
 
 // Go invokes the function asynchronously. See net/rpc Client.Go.
-func (e *Endpoint) Go(function string, args interface{}, reply interface{}) *rpcCall {
+func (e *Endpoint) Go(getMsg func(id uint64) []byte, reply interface{}) *rpcCall {
 	call := &rpcCall{}
-	call.ServiceMethod = function
-	call.Args = args
 	call.Reply = reply
 	call.Done = make(chan *rpcCall, 1)
-
-	msg := &Message{
-		Func: function,
-		Args: args,
-	}
 
 	e.client.mutex.Lock()
 	e.client.seq++
 	id := e.client.seq
-	msg.ID = &id
+	msg := getMsg(id)
 	e.client.pending[id] = call
 	e.client.mutex.Unlock()
 
 	// put sending in a goroutine so a malicious client that
 	// refuses to read cannot ever make a .Go call block
-	go e.send(msg)
+	go e.conn.WriteMessage(websocket.TextMessage, msg)
+
 	return call
 }
 
 // Call invokes the named function, waits for it to complete, and
 // returns its error status. See net/rpc Client.Call
 func (e *Endpoint) Call(function string, args interface{}, reply interface{}) error {
-	call := <-e.Go(function, args, reply).Done
+	fn := func(id uint64) []byte {
+		msg := &Message{
+			Func: function,
+			Args: args,
+			ID:   &id,
+		}
+
+		bytes, err := json.Marshal(&msg)
+		if err != nil {
+			log.Printf("Call Error: %v", err)
+		}
+
+		return bytes
+	}
+
+	call := <-e.Go(fn, reply).Done
+	return call.Error
+}
+
+// CallRaw calls `Call` with precompiled args
+func (e *Endpoint) CallRaw(fn func(id uint64) []byte, reply interface{}) error {
+	call := <-e.Go(fn, reply).Done
 	return call.Error
 }
 
