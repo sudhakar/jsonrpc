@@ -145,7 +145,6 @@ class WSClientTransport {
     send(msg) {
         if (this.ws?.readyState !== WebSocket.OPEN) {
             this.sendBuffer.push(msg);
-            console.log(this.sendBuffer.length);
             if (this.sendBuffer.length >= MAX_BUF_SIZE) {
                 throw new Error(`sendBuffer is overflowing!. Max=${MAX_BUF_SIZE}`);
             }

@@ -43,7 +43,7 @@ type rpcCall struct {
 //   {"id":"1","error":{"msg":"Math is hard, let's go shopping"}}
 type Message struct {
 	// 0 or omitted for untagged request
-	ID *uint64 `json:"id,uint64,omitempty"`
+	ID *uint64 `json:"id,omitempty"`
 
 	// Name of the function to call. If set, this is a request; if
 	// unset, this is a response.
@@ -62,7 +62,7 @@ type Message struct {
 }
 
 type anyMessage struct {
-	ID     *uint64         `json:"id,uint64,omitempty"`
+	ID     *uint64         `json:"id,omitempty"`
 	Func   string          `json:"method,omitempty"`
 	Args   json.RawMessage `json:"params,omitempty"`
 	Result json.RawMessage `json:"result,omitempty"`
@@ -76,7 +76,7 @@ type Error struct {
 
 	Code int64 `json:"code"`
 
-	Data json.RawMessage `json:"data,omitempty"`
+	Data string `json:"data,omitempty"`
 }
 
 func (e Error) Error() string {
@@ -87,22 +87,22 @@ var (
 	noMethodErr = Error{
 		Code: -32601,
 		Msg:  "NoMethodError",
-		Data: []byte("No such function. "),
+		Data: "No such function. ",
 	}
 	invalidParamsErr = Error{
 		Code: -32602,
 		Msg:  "invalidParamsErr",
-		Data: []byte("Invalid method parameter(s). "),
+		Data: "Invalid method parameter(s). ",
 	}
 	parseError = Error{
 		Code: -32700,
 		Msg:  "ParseError",
-		Data: []byte("Invalid JSON was received. "),
+		Data: "Invalid JSON was received. ",
 	}
 	serverError = Error{
 		Code: -32000,
 		Msg:  "ServerError",
-		Data: []byte("Error from called method. "),
+		Data: "Error from called method. ",
 	}
 )
 
@@ -272,7 +272,7 @@ func (e *Endpoint) serveRequest(msg *Message) error {
 	e.server.registry.mu.RUnlock()
 	if fn == nil {
 		rpcErr := noMethodErr
-		rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte("method="+msg.Func)...)
+		rpcErr.Data = rpcErr.Data + ", method=" + msg.Func
 		msg.Error = &rpcErr
 		msg.Func = ""
 		msg.Args = nil
@@ -300,7 +300,7 @@ func (e *Endpoint) serveResponse(msg *Message) error {
 	e.client.mutex.Unlock()
 
 	if !found {
-		return fmt.Errorf("Server responded with unknown seq %v", msg.ID)
+		return fmt.Errorf("server responded with unknown seq %v", msg.ID)
 	}
 
 	if msg.Error == nil {
@@ -313,7 +313,7 @@ func (e *Endpoint) serveResponse(msg *Message) error {
 				err := json.Unmarshal(raw, call.Reply)
 				if err != nil {
 					rpcErr := parseError
-					rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+					rpcErr.Data = rpcErr.Data + ", err: " + err.Error()
 					call.Error = &rpcErr
 				}
 			}
@@ -399,7 +399,7 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 
 		if err != nil {
 			rpcErr := invalidParamsErr
-			rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+			rpcErr.Data = rpcErr.Data + ", err: " + err.Error()
 			msg.Error = &rpcErr
 			msg.Func = ""
 			msg.Args = nil
@@ -419,7 +419,7 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 	}
 
 	numArgs := fn.method.Type.NumIn()
-	argslist := make([]reflect.Value, numArgs, numArgs)
+	argslist := make([]reflect.Value, numArgs)
 
 	argslist[0] = fn.receiver
 	argslist[1] = args
@@ -442,7 +442,7 @@ func (e *Endpoint) call(fn *function, msg *Message) {
 		if errIn != nil {
 			err := errIn.(error)
 			rpcErr := serverError
-			rpcErr.Data = append([]byte(rpcErr.Data)[:], []byte(err.Error())...)
+			rpcErr.Data = rpcErr.Data + ", err: " + err.Error()
 			msg.Error = &rpcErr
 			msg.Func = ""
 			msg.Args = nil
