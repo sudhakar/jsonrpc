@@ -483,9 +483,7 @@ func (e *Endpoint) invoke(getMsg func(id uint64) []byte, reply interface{}) *rpc
 	e.client.pending[id] = call
 	e.client.mutex.Unlock()
 
-	// put sending in a goroutine so a malicious client that
-	// refuses to read cannot ever make a .Go call block
-	go e.conn.WriteMessage(websocket.TextMessage, msg)
+	e.conn.WriteMessage(websocket.TextMessage, msg)
 
 	return call
 }
