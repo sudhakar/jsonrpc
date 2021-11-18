@@ -1,7 +1,7 @@
 type handlerFn = (params: any) => Promise<any>
 type promisePair = { resolve: Function; reject: Function }
 
-interface JsonRPC {
+export interface JsonRPC {
   /** register a method to be called from other side */
   register: (method: string, handler: handlerFn) => void
 
@@ -128,7 +128,7 @@ class WSRPC implements JsonRPC {
   }
 }
 
-interface WSTransport {
+export interface WSTransport {
   setOnMessage(fn: (data: any) => void): void
   send(msg: string): void
 }
@@ -222,4 +222,4 @@ class WSServerTransport implements WSTransport {
   }
 }
 
-export { JsonRPC, WSRPC, WSTransport, WSClientTransport, WSServerTransport }
+export { WSRPC, WSClientTransport, WSServerTransport }
