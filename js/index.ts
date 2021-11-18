@@ -14,7 +14,7 @@ interface JsonRPC {
 
 const isBrowser = () => ![typeof window, typeof document].includes('undefined')
 
-let WebSocket = isBrowser() ? window.WebSocket : require('ws')
+let WebSocket = isBrowser() ? window.WebSocket : await import('ws')
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000

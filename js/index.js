@@ -1,8 +1,5 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.WSServerTransport = exports.WSClientTransport = exports.WSRPC = void 0;
 const isBrowser = () => ![typeof window, typeof document].includes('undefined');
-let WebSocket = isBrowser() ? window.WebSocket : require('ws');
+let WebSocket = isBrowser() ? window.WebSocket : await import('ws');
 const MAX_BUF_SIZE = 100;
 const RECONNECT_MS = 5000;
 const NOISY_ERRS = new Set(['ECONNREFUSED']);
@@ -99,7 +96,6 @@ class WSRPC {
         this.send(msg);
     }
 }
-exports.WSRPC = WSRPC;
 /**
  * WSClientTransport websocket client with reconnection & buffering
  */
@@ -156,7 +152,6 @@ class WSClientTransport {
         this.ws?.close(code);
     }
 }
-exports.WSClientTransport = WSClientTransport;
 class WSServerTransport {
     constructor(ws) {
         this.onmessage = (data) => { };
@@ -170,4 +165,4 @@ class WSServerTransport {
         this.ws.send(msg);
     }
 }
-exports.WSServerTransport = WSServerTransport;
+export { WSRPC, WSClientTransport, WSServerTransport };
