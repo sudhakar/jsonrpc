@@ -12,7 +12,7 @@ export interface JsonRPC {
   notify: (method: string, params?: any) => void
 }
 
-if (typeof WebSocket == 'undefined') WebSocket = require('ws')
+if (typeof WebSocket == 'undefined') globalThis.WebSocket = require('ws')
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000

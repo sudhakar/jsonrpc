@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 if (typeof WebSocket == 'undefined')
-    WebSocket = require('ws');
+    globalThis.WebSocket = require('ws');
 const MAX_BUF_SIZE = 100;
 const RECONNECT_MS = 5000;
 const NOISY_ERRS = new Set(['ECONNREFUSED']);
