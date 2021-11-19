@@ -221,4 +221,4 @@ class WSServerTransport implements WSTransport {
   }
 }
 
-export { WSRPC, WSClientTransport, WSServerTransport }
+module.exports = { WSRPC, WSClientTransport, WSServerTransport }

@@ -165,4 +165,5 @@ class WSServerTransport {
         this.ws.send(msg);
     }
 }
-export { WSRPC, WSClientTransport, WSServerTransport };
+module.exports = { WSRPC, WSClientTransport, WSServerTransport };
+export {};
