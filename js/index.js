@@ -1,4 +1,5 @@
-let $WebSocket = typeof WebSocket != 'undefined' ? WebSocket : await import('ws');
+if (typeof WebSocket == 'undefined')
+    WebSocket = require('ws');
 const MAX_BUF_SIZE = 100;
 const RECONNECT_MS = 5000;
 const NOISY_ERRS = new Set(['ECONNREFUSED']);
@@ -128,7 +129,7 @@ class WSClientTransport {
         this.errCB(err);
     }
     connect() {
-        const ws = (this.ws = new $WebSocket(this.url));
+        const ws = (this.ws = new WebSocket(this.url));
         ws.onmessage = (ev) => this.onmessage(ev.data);
         ws.onerror = (ev) => this.onerror(ev.error);
         ws.onopen = () => this.onopen();

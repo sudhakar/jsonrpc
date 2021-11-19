@@ -12,8 +12,7 @@ export interface JsonRPC {
   notify: (method: string, params?: any) => void
 }
 
-let $WebSocket =
-  typeof WebSocket != 'undefined' ? WebSocket : await import('ws')
+if (typeof WebSocket == 'undefined') WebSocket = require('ws')
 
 const MAX_BUF_SIZE = 100
 const RECONNECT_MS = 5000
@@ -177,7 +176,7 @@ class WSClientTransport implements WSTransport {
   }
 
   public connect() {
-    const ws = (this.ws = new $WebSocket(this.url) as WebSocket)
+    const ws = (this.ws = new WebSocket(this.url) as WebSocket)
     ws.onmessage = (ev: any) => this.onmessage(ev.data)
     ws.onerror = (ev: any) => this.onerror(ev.error)
     ws.onopen = () => this.onopen()
