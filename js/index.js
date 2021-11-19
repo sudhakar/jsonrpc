@@ -1,3 +1,5 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
 if (typeof WebSocket == 'undefined')
     WebSocket = require('ws');
 const MAX_BUF_SIZE = 100;
@@ -166,4 +168,3 @@ class WSServerTransport {
     }
 }
 module.exports = { WSRPC, WSClientTransport, WSServerTransport };
-export {};
