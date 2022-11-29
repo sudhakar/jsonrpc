@@ -1,5 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const JSONSerDe = {
+    encode: (data) => JSON.stringify(data),
+    decode: (obj) => JSON.parse(obj),
+};
+const NOOPSerDe = {
+    encode: (data) => data,
+    decode: (obj) => obj,
+};
 if (typeof WebSocket == 'undefined')
     globalThis.WebSocket = require('ws');
 const MAX_BUF_SIZE = 100;
@@ -16,15 +24,15 @@ const NO_METHOD_ERRPR = {
     data: 'No such function. ',
 };
 class WSRPC {
-    constructor(transport) {
+    constructor(transport, serde = JSONSerDe) {
         this.id = 0;
         this.methods = new Map();
         this.pending = new Map();
         this.transport = transport;
-        transport.setOnMessage(this.on.bind(this));
+        this.serde = serde;
+        transport.setOnMessage((data) => this.on(serde.decode(data)));
     }
-    on(data) {
-        const msg = JSON.parse(data);
+    on(msg) {
         // call
         if ('method' in msg) {
             const fn = this.methods.get(msg.method);
@@ -32,7 +40,7 @@ class WSRPC {
                 const err = { ...NO_METHOD_ERRPR };
                 err.data += `method=${msg.method}`;
                 if ('id' in msg) {
-                    this.send(JSON.stringify({ id: msg.id, error: err }));
+                    this.send({ id: msg.id, error: err });
                 }
                 else {
                     console.error(`WSRPC: Cant 'notify' unknown method "${msg.method}"`);
@@ -43,11 +51,11 @@ class WSRPC {
             if ('id' in msg) {
                 const resp = { /*jsonrpc: '2.0',*/ id: msg.id };
                 fn(msg.params)
-                    .then(result => this.send(JSON.stringify({ ...resp, result })))
+                    .then(result => this.send({ ...resp, result }))
                     .catch(error => {
                     const msg = { ...resp, error: { ...SERVER_ERROR } };
                     msg.error.data += `name=${error.name}, message=${error.message}`;
-                    this.send(JSON.stringify(msg));
+                    this.send(msg);
                 });
                 return;
             }
@@ -75,14 +83,14 @@ class WSRPC {
         }
     }
     send(msg) {
-        this.transport.send(msg);
+        this.transport.send(this.serde.encode(msg));
     }
     register(method, handler) {
         this.methods.set(method, handler);
     }
     call(method, params) {
         const id = this.id++;
-        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params });
+        const msg = { /*jsonrpc: '2.0',*/ id, method, params };
         try {
             this.send(msg);
         }
@@ -94,7 +102,7 @@ class WSRPC {
         });
     }
     notify(method, params) {
-        const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params });
+        const msg = { /*jsonrpc: '2.0',*/ method, params };
         this.send(msg);
     }
 }
@@ -156,15 +164,36 @@ class WSClientTransport {
 }
 class WSServerTransport {
     constructor(ws) {
-        this.onmessage = (data) => { };
         this.ws = ws;
-        this.ws.onmessage = evt => this.onmessage(evt.data);
     }
     setOnMessage(fn) {
-        this.onmessage = fn;
+        this.ws.onmessage = evt => fn(evt.data);
     }
     send(msg) {
         this.ws.send(msg);
     }
 }
-module.exports = { WSRPC, WSClientTransport, WSServerTransport };
+/**
+ * WebWorkerTransport supports both Worker & SharedWorker on the main thread side
+ * On the Worker side either pass MessagePort for SharedWorker or
+ * pass a WorkerLike like object with `onmessage` and `postMessage` methods
+ */
+class WebWorkerTransport {
+    constructor(worker) {
+        this.worker = worker;
+    }
+    setOnMessage(fn) {
+        this.worker.onmessage = evt => fn(evt.data);
+    }
+    send(msg) {
+        this.worker.postMessage(msg);
+    }
+}
+module.exports = {
+    JSONSerDe,
+    NOOPSerDe,
+    WSRPC,
+    WSClientTransport,
+    WSServerTransport,
+    WebWorkerTransport,
+};

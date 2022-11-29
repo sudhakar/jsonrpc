@@ -1,6 +1,29 @@
 type handlerFn = (params: any) => Promise<any>
 type promisePair = { resolve: Function; reject: Function }
 
+type Message = {
+  method?: string
+  id?: number
+  params?: any
+  result?: any
+  error?: any
+}
+
+export interface SerDe {
+  encode(data: Message): any
+  decode(obj: any): Message
+}
+
+const JSONSerDe: SerDe = {
+  encode: (data) => JSON.stringify(data),
+  decode: (obj) => JSON.parse(obj),
+}
+
+const NOOPSerDe: SerDe = {
+  encode: (data) => data,
+  decode: (obj) => obj,
+}
+
 export interface JsonRPC {
   /** register a method to be called from other side */
   register: (method: string, handler: handlerFn) => void
@@ -32,26 +55,27 @@ const NO_METHOD_ERRPR = {
 
 class WSRPC implements JsonRPC {
   private id = 0
+  private serde: SerDe
   private transport: WSTransport
   private methods: Map<string, handlerFn> = new Map()
   private pending: Map<number, promisePair> = new Map()
 
-  constructor(transport: WSTransport) {
+  constructor(transport: WSTransport, serde = JSONSerDe) {
     this.transport = transport
-    transport.setOnMessage(this.on.bind(this))
+    this.serde = serde
+    transport.setOnMessage((data: any) => this.on(serde.decode(data)))
   }
 
-  private on(data: string) {
-    const msg = JSON.parse(data)
+  private on(msg: Message) {
 
     // call
     if ('method' in msg) {
-      const fn = this.methods.get(msg.method)
+      const fn = this.methods.get(msg.method!)
       if (!fn) {
         const err = { ...NO_METHOD_ERRPR }
         err.data += `method=${msg.method}`
         if ('id' in msg) {
-          this.send(JSON.stringify({ id: msg.id, error: err }))
+          this.send({ id: msg.id, error: err })
         } else {
           console.error(`WSRPC: Cant 'notify' unknown method "${msg.method}"`)
         }
@@ -63,11 +87,11 @@ class WSRPC implements JsonRPC {
         const resp = { /*jsonrpc: '2.0',*/ id: msg.id }
 
         fn(msg.params)
-          .then(result => this.send(JSON.stringify({ ...resp, result })))
+          .then(result => this.send({ ...resp, result }))
           .catch(error => {
             const msg = { ...resp, error: { ...SERVER_ERROR } }
             msg.error.data += `name=${error.name}, message=${error.message}`
-            this.send(JSON.stringify(msg))
+            this.send(msg)
           })
         return
       }
@@ -79,18 +103,18 @@ class WSRPC implements JsonRPC {
 
     // resolve
     if ('id' in msg) {
-      if (!this.pending.has(msg.id)) {
+      if (!this.pending.has(msg.id!)) {
         console.error('WSRPC: Cant resolve requestID: ', msg.id)
         return
       }
 
-      const { resolve, reject } = this.pending.get(msg.id)!
+      const { resolve, reject } = this.pending.get(msg.id!)!
       if ('result' in msg) resolve(msg.result)
       else if ('error' in msg) reject(msg.error)
       else {
         console.warn(
           `Received msgID=${msg.id} with neither 'result' or 'error'. ` +
-            `Likely service method is for 'notify' but is called as 'request'`,
+          `Likely service method is for 'notify' but is called as 'request'`,
         )
         resolve()
       }
@@ -98,8 +122,8 @@ class WSRPC implements JsonRPC {
     }
   }
 
-  private send(msg: string) {
-    this.transport.send(msg)
+  private send(msg: Message) {
+    this.transport.send(this.serde.encode(msg))
   }
 
   public register(method: string, handler: handlerFn) {
@@ -108,7 +132,7 @@ class WSRPC implements JsonRPC {
 
   public call(method: string, params?: any): Promise<any> {
     const id = this.id++
-    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ id, method, params })
+    const msg = { /*jsonrpc: '2.0',*/ id, method, params }
 
     try {
       this.send(msg)
@@ -122,14 +146,19 @@ class WSRPC implements JsonRPC {
   }
 
   public notify(method: string, params?: any) {
-    const msg = JSON.stringify({ /*jsonrpc: '2.0',*/ method, params })
+    const msg = { /*jsonrpc: '2.0',*/ method, params }
     this.send(msg)
   }
 }
 
 export interface WSTransport {
   setOnMessage(fn: (data: any) => void): void
-  send(msg: string): void
+  send(msg: any): void
+}
+
+export interface WorkerLike {
+  onmessage: ((this: Worker, ev: MessageEvent) => any) | null;
+  postMessage(message: any, options?: any): void;
 }
 
 /**
@@ -142,9 +171,9 @@ class WSClientTransport implements WSTransport {
   private openCB: () => void
   private errCB: (e: Error) => void
   private sendBuffer: string[] = []
-  private onmessage = (data: any) => {}
+  private onmessage = (data: any) => { }
 
-  constructor(url: string, openCB = () => {}, errCB = console.error) {
+  constructor(url: string, openCB = () => { }, errCB = console.error) {
     this.url = url
     this.openCB = openCB
     this.errCB = errCB
@@ -205,20 +234,45 @@ class WSClientTransport implements WSTransport {
 
 class WSServerTransport implements WSTransport {
   private ws: WebSocket
-  private onmessage = (data: any) => {}
 
   constructor(ws: WebSocket) {
     this.ws = ws
-    this.ws.onmessage = evt => this.onmessage(evt.data)
   }
 
   public setOnMessage(fn: (data: any) => void) {
-    this.onmessage = fn
+    this.ws.onmessage = evt => fn(evt.data)
   }
 
   public send(msg: string) {
     this.ws.send(msg)
   }
 }
+/**
+ * WebWorkerTransport supports both Worker & SharedWorker on the main thread side
+ * On the Worker side either pass MessagePort for SharedWorker or
+ * pass a WorkerLike like object with `onmessage` and `postMessage` methods
+ */
+class WebWorkerTransport implements WSTransport {
+  private worker: Worker | WorkerLike
 
-module.exports = { WSRPC, WSClientTransport, WSServerTransport }
+  constructor(worker: Worker | WorkerLike) {
+    this.worker = worker
+  }
+
+  public setOnMessage(fn: (data: any) => void): void {
+    this.worker.onmessage = evt => fn(evt.data)
+  }
+
+  public send(msg: string): void {
+    this.worker.postMessage(msg)
+  }
+}
+
+module.exports = {
+  JSONSerDe,
+  NOOPSerDe,
+  WSRPC,
+  WSClientTransport,
+  WSServerTransport,
+  WebWorkerTransport,
+}
